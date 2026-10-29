@@ -1,0 +1,10 @@
+muxlight
+Copyright 2026 paipaiio
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It depends on the following third-party software, each under its own license:
+
+- github.com/adamvduke/pst — MIT License, Copyright (c) 2026 Adam Duke
+- github.com/creack/pty — MIT License, Copyright (c) 2011 Keith Rarick
+- golang.org/x/term, golang.org/x/sys — BSD 3-Clause License, Copyright 2009 The Go Authors
