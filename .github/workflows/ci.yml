@@ -22,9 +22,11 @@ jobs:
           if [ -n "$unformatted" ]; then echo "needs gofmt:"; echo "$unformatted"; exit 1; fi
       - name: go vet
         run: go vet ./...
+      # The release binary must be built with a Go at least as new as go.mod's
+      # (1.26); v2.7.2 was built with 1.25 and refuses to run.
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.7.2
+          version: v2.15.0
 
   test:
     strategy:
