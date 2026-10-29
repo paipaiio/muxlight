@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sync"
@@ -18,29 +19,29 @@ import (
 
 const publishTimeout = 2 * time.Second
 
-func cmdRun(args []string) (int, error) {
+func cmdRun(args []string, e env) (int, error) {
 	if len(args) == 0 {
 		return 2, errors.New("run: missing command")
 	}
-	pane := os.Getenv("TMUX_PANE")
+	pane := e.getenv("TMUX_PANE")
 	if pane == "" {
 		// Outside tmux the real terminal answers the query itself, and a
 		// second reply would reach the program as stray input.
-		return 1, execDirect(args)
+		return 1, e.exec(args)
 	}
 
 	store := pst.NewStore()
-	pub := newAsyncPublisher(tmux.NewPublisher(tmux.ExecRunner{}, pane))
+	pub := newAsyncPublisher(tmux.NewPublisher(e.runner, pane))
 	pub.publish(status.Summary{}) // drop a previous run's record
 
-	code, err := shim.Run(args, func(r pst.Report) {
+	code, err := shim.RunWith(args, e.stdin, e.stdout, func(r pst.Report) {
 		if len(store.Apply(r)) > 0 {
 			pub.send(status.Summarize(store.All()))
 		}
 	})
 	store.ProcessExited() // spec lifetime rule: working and blocked go, done and error stay
 	pub.close(status.Summarize(store.All()))
-	pub.reportErrors()
+	pub.reportErrors(e.stderr)
 	return code, err
 }
 
@@ -114,11 +115,11 @@ func (a *asyncPublisher) publish(s status.Summary) {
 	}
 }
 
-// reportErrors prints a one-line summary of failed tmux updates, if any.
-func (a *asyncPublisher) reportErrors() {
+// reportErrors writes a one-line summary of failed tmux updates, if any.
+func (a *asyncPublisher) reportErrors(w io.Writer) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.failures > 0 {
-		fmt.Fprintf(os.Stderr, "muxlight: %d status update(s) failed; first: %v\n", a.failures, a.firstErr)
+		_, _ = fmt.Fprintf(w, "muxlight: %d status update(s) failed; first: %v\n", a.failures, a.firstErr)
 	}
 }

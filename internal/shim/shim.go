@@ -28,10 +28,24 @@ import (
 // with no states or kinds means the fixed revision 0.4 lists.
 var queryReply = []byte("\x1b]7501;?\x1b\\")
 
+// defaultSize is used when the input is not a terminal, so the program never
+// sees a 0x0 window. Some TUIs draw nothing at that size.
+var defaultSize = pty.Winsize{Rows: 24, Cols: 80}
+
 // Run starts argv in a new pty wired to the current terminal and calls
 // onReport for each valid OSC 7501 report the program writes. It returns
 // the program's exit code.
 func Run(argv []string, onReport func(pst.Report)) (int, error) {
+	return RunWith(argv, os.Stdin, os.Stdout, onReport)
+}
+
+// RunWith is Run with explicit streams. in feeds the program's input and
+// gives the pty its size; while the program runs, in is switched to raw mode
+// if it is a terminal. Program output goes to out.
+func RunWith(argv []string, in *os.File, out io.Writer, onReport func(pst.Report)) (int, error) {
+	if len(argv) == 0 {
+		return 1, errors.New("no command")
+	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -39,21 +53,21 @@ func Run(argv []string, onReport func(pst.Report)) (int, error) {
 	}
 	defer func() { _ = ptmx.Close() }() // the program has exited; nothing to report
 
-	stopResize := followWindowSize(ptmx)
+	stopResize := followWindowSize(in, ptmx)
 	defer stopResize()
 	stopSignals := forwardSignals(cmd.Process)
 	defer stopSignals()
 
-	if term.IsTerminal(int(os.Stdin.Fd())) {
-		old, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if term.IsTerminal(int(in.Fd())) {
+		old, err := term.MakeRaw(int(in.Fd()))
 		if err != nil {
 			return 1, fmt.Errorf("set raw mode: %w", err)
 		}
-		defer func() { _ = term.Restore(int(os.Stdin.Fd()), old) }() // best effort on the way out
+		defer func() { _ = term.Restore(int(in.Fd()), old) }() // best effort on the way out
 	}
 
-	go func() { _, _ = io.Copy(ptmx, os.Stdin) }()
-	pump(ptmx, os.Stdout, onReport)
+	go func() { _, _ = io.Copy(ptmx, in) }()
+	pump(ptmx, out, onReport)
 
 	return exitCode(cmd.Wait())
 }
@@ -88,15 +102,18 @@ func handle(seq []byte, ptmx io.Writer, onReport func(pst.Report)) {
 	// Discarded and ignored reports are dropped, as the spec requires.
 }
 
-func followWindowSize(ptmx *os.File) (stop func()) {
+// followWindowSize sizes the pty from in now and on every SIGWINCH.
+func followWindowSize(in, ptmx *os.File) (stop func()) {
+	if err := pty.InheritSize(in, ptmx); err != nil {
+		_ = pty.Setsize(ptmx, &defaultSize)
+	}
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGWINCH)
 	go func() {
 		for range ch {
-			_ = pty.InheritSize(os.Stdin, ptmx)
+			_ = pty.InheritSize(in, ptmx)
 		}
 	}()
-	ch <- syscall.SIGWINCH // size the pty once before the program draws
 	return func() { signal.Stop(ch); close(ch) }
 }
 

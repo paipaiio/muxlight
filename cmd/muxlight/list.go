@@ -5,20 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"text/tabwriter"
 	"time"
 
 	"github.com/paipaiio/muxlight/internal/tmux"
 )
 
-func cmdList(w io.Writer) error {
+func cmdList(e env) error {
 	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
 	defer cancel()
-	panes, err := tmux.List(ctx, tmux.ExecRunner{})
+	panes, err := tmux.List(ctx, e.runner)
 	if err != nil {
 		return err
 	}
+	return writeList(e.stdout, panes, time.Now())
+}
+
+func writeList(w io.Writer, panes []tmux.PaneStatus, now time.Time) error {
 	if len(panes) == 0 {
 		_, err := fmt.Fprintln(w, "no pane has a status")
 		return err
@@ -26,7 +29,6 @@ func cmdList(w io.Writer) error {
 	// tabwriter buffers everything until Flush, so write errors surface there.
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "PANE\tSTATE\tAPP\tAGE\tMESSAGE")
-	now := time.Now()
 	for _, p := range panes {
 		state := string(p.State)
 		if p.Kind != "" {
@@ -51,8 +53,8 @@ func age(d time.Duration) string {
 	}
 }
 
-func cmdClear(args []string) error {
-	pane := os.Getenv("TMUX_PANE")
+func cmdClear(args []string, e env) error {
+	pane := e.getenv("TMUX_PANE")
 	if len(args) > 0 {
 		pane = args[0]
 	}
@@ -61,5 +63,5 @@ func cmdClear(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
 	defer cancel()
-	return tmux.ClearPane(ctx, tmux.ExecRunner{}, pane)
+	return tmux.ClearPane(ctx, e.runner, pane)
 }

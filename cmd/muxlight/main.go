@@ -7,7 +7,10 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
+
+	"github.com/paipaiio/muxlight/internal/tmux"
 )
 
 var version = "dev"
@@ -21,33 +24,61 @@ Usage:
   muxlight version
 `
 
+// env is everything a command touches outside the process, so tests can
+// replace it.
+type env struct {
+	runner tmux.Runner
+	stdin  *os.File
+	stdout io.Writer
+	stderr io.Writer
+	getenv func(string) string
+	// exec replaces the process with argv. It must not return on success.
+	exec func(argv []string) error
+}
+
+func defaultEnv() env {
+	return env{
+		runner: tmux.ExecRunner{},
+		stdin:  os.Stdin,
+		stdout: os.Stdout,
+		stderr: os.Stderr,
+		getenv: os.Getenv,
+		exec:   execDirect,
+	}
+}
+
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+	os.Exit(run(os.Args[1:], defaultEnv()))
+}
+
+// run dispatches one command line and returns the exit code.
+func run(args []string, e env) int {
+	if len(args) == 0 {
+		_, _ = fmt.Fprint(e.stderr, usage)
+		return 2
 	}
 	var code int
 	var err error
-	switch os.Args[1] {
+	switch args[0] {
 	case "run":
-		code, err = cmdRun(os.Args[2:])
+		code, err = cmdRun(args[1:], e)
 	case "ls":
-		err = cmdList(os.Stdout)
+		err = cmdList(e)
 	case "clear":
-		err = cmdClear(os.Args[2:])
+		err = cmdClear(args[1:], e)
 	case "version", "--version":
-		fmt.Println("muxlight", version)
+		_, err = fmt.Fprintln(e.stdout, "muxlight", version)
 	case "help", "-h", "--help":
-		fmt.Print(usage)
+		_, err = fmt.Fprint(e.stdout, usage)
 	default:
-		fmt.Fprintf(os.Stderr, "muxlight: unknown command %q\n\n%s", os.Args[1], usage)
-		code = 2
+		_, _ = fmt.Fprintf(e.stderr, "muxlight: unknown command %q\n\n%s", args[0], usage)
+		return 2
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "muxlight:", err)
+		_, _ = fmt.Fprintln(e.stderr, "muxlight:", err)
 		if code == 0 {
 			code = 1
 		}
 	}
-	os.Exit(code)
+	return code
 }
